@@ -1,8 +1,14 @@
 {
     "name": "amphibee/meilisearch-facets",
     "description": "Système de filtres/facettes Meilisearch réutilisable pour les projets Pollora (Laravel + WordPress).",
-    "type": "library",
+    "type": "wordpress-plugin",
     "license": "MIT",
+    "authors": [
+        {
+            "name": "AmphiBee",
+            "email": "contact@amphibee.fr"
+        }
+    ],
     "require": {
         "php": "^8.4"
     },
