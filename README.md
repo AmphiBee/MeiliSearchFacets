@@ -9,22 +9,25 @@ Plugin Composer réutilisable pour ajouter un système de **filtres/facettes Mei
 1. [Prérequis](#prérequis)
 2. [Installation](#installation)
 3. [Configuration](#configuration)
-4. [Créer un listing facetté en 5 étapes](#créer-un-listing-facetté-en-5-étapes)
+4. [Créer un listing facetté en 6 étapes](#créer-un-listing-facetté-en-6-étapes)
    - [Étape 1 — Implémenter SearchConfigInterface](#étape-1--implémenter-searchconfiginterface)
-   - [Étape 2 — Enregistrer le handler AJAX (Hook Pollora)](#étape-2--enregistrer-le-handler-ajax-hook-pollora)
+   - [Étape 2 — Enregistrer les handlers](#étape-2--enregistrer-les-handlers)
    - [Étape 3 — Configurer l'index Meilisearch](#étape-3--configurer-lindex-meilisearch)
-   - [Étape 4 — Construire le template Blade](#étape-4--construire-le-template-blade)
-   - [Étape 5 — Initialiser le composant Alpine.js](#étape-5--initialiser-le-composant-alpinejs)
-5. [Référence — SearchConfigInterface](#référence--searchconfiginterface)
-6. [Référence — Conventions de nommage des inputs](#référence--conventions-de-nommage-des-inputs)
-7. [Cas d'usage avancés](#cas-dusage-avancés)
+   - [Étape 4 — Créer les vues du thème](#étape-4--créer-les-vues-du-thème)
+   - [Étape 5 — Configurer le bloc "Listing facetté"](#étape-5--configurer-le-bloc-listing-facetté)
+   - [Étape 6 — Ajouter des filtres (blocs enfants)](#étape-6--ajouter-des-filtres-blocs-enfants)
+5. [Référence — Les types de filtres Gutenberg](#référence--les-types-de-filtres-gutenberg)
+6. [Référence — SearchConfigInterface](#référence--searchconfiginterface)
+7. [Référence — Conventions de nommage des inputs](#référence--conventions-de-nommage-des-inputs)
+8. [Cas d'usage avancés](#cas-dusage-avancés)
+   - [Filtres custom (post_type, meta_boolean)](#filtres-custom-post_type-meta_boolean)
    - [Filtres numériques (prix, durée...)](#filtres-numériques-prix-durée)
-   - [Filtres meta custom (booléens, relationnels)](#filtres-meta-custom-booléens-relationnels)
    - [Listing sans filtres numériques](#listing-sans-filtres-numériques)
    - [Pagination personnalisée](#pagination-personnalisée)
    - [Plusieurs listings sur un même projet](#plusieurs-listings-sur-un-même-projet)
-8. [Architecture interne](#architecture-interne)
-9. [Résolution de problèmes](#résolution-de-problèmes)
+   - [Implémentation manuelle (sans Gutenberg)](#implémentation-manuelle-sans-gutenberg)
+9. [Architecture interne](#architecture-interne)
+10. [Résolution de problèmes](#résolution-de-problèmes)
 
 ---
 
@@ -122,9 +125,11 @@ ddev exec wp meiliscout index --clear
 
 ---
 
-## Créer un listing facetté en 5 étapes
+## Créer un listing facetté en 6 étapes
 
-Voici comment ajouter un listing facetté de bout en bout. L'exemple utilise un CPT `product` avec une taxonomie `product-category` et un filtre de prix.
+L'approche recommandée utilise les blocs Gutenberg : les filtres et la mise en page se configurent directement dans l'éditeur, sans toucher aux templates Blade. La partie PHP reste nécessaire pour la logique de recherche.
+
+L'exemple ci-dessous utilise un CPT `reference` avec une taxonomie `activity-sector` et un filtre relationnel.
 
 ---
 
@@ -134,16 +139,15 @@ Créer une classe dans `app/Search/` qui étend `AbstractSearchConfig`.
 
 ```php
 <?php
-// app/Search/ProductSearchConfig.php
+// app/Search/ReferenceSearchConfig.php
 
 declare(strict_types=1);
 
 namespace App\Search;
 
 use AmphiBee\MeilisearchFacets\Config\AbstractSearchConfig;
-use AmphiBee\MeilisearchFacets\DTO\NumericRange;
 
-class ProductSearchConfig extends AbstractSearchConfig
+class ReferenceSearchConfig extends AbstractSearchConfig
 {
     /**
      * Nom unique de l'action AJAX pour ce listing.
@@ -151,7 +155,7 @@ class ProductSearchConfig extends AbstractSearchConfig
      */
     public function getAjaxAction(): string
     {
-        return 'myproject_products_facets';
+        return 'myproject_references_facets';
     }
 
     /**
@@ -159,7 +163,7 @@ class ProductSearchConfig extends AbstractSearchConfig
      */
     public function getPostType(): string
     {
-        return 'product';
+        return 'reference';
     }
 
     /**
@@ -168,53 +172,33 @@ class ProductSearchConfig extends AbstractSearchConfig
      */
     public function getFilterableTaxonomies(): array
     {
-        return ['product-category', 'product-brand'];
+        return ['activity-sector'];
     }
 
     /**
-     * Plages numériques (optionnel).
-     * Supprimer cette méthode si aucun filtre numérique n'est nécessaire.
-     *
-     * La clé du tableau ('price_range') sera le name de l'input HTML.
-     * Le champ Meilisearch ('metas.price') doit être dans l'index.
-     */
-    public function getNumericRangeGroups(): array
-    {
-        return [
-            'price_range' => [
-                NumericRange::between('0-50',    'metas.price', 0,   50),
-                NumericRange::between('50-100',  'metas.price', 50,  100),
-                NumericRange::between('100-200', 'metas.price', 100, 200),
-                NumericRange::above('200+',      'metas.price', 200),
-            ],
-        ];
-    }
-
-    /**
-     * Nombre de résultats par page.
-     */
-    public function getHitsPerPage(): int
-    {
-        return 9; // grille 3×3
-    }
-
-    /**
-     * Tri par défaut.
-     * Laisser vide pour utiliser le ranking natif Meilisearch.
-     */
-    public function getDefaultSort(): array
-    {
-        return ['post_title:asc'];
-    }
-
-    /**
-     * Rendu d'une carte produit.
-     * Appelé pour chaque résultat lors d'une requête AJAX.
+     * Rendu d'une carte résultat.
+     * Appelé pour chaque hit retourné par Meilisearch.
      * $hit['ID'] contient l'ID WordPress du post.
      */
     public function renderHit(array $hit): string
     {
-        return view('components.cards.product', ['id' => $hit['ID']])->render();
+        return view('components.meilisearch.card', ['post' => get_post($hit['ID'])])->render();
+    }
+
+    /**
+     * Filtres custom pour les meta non reconnues automatiquement
+     * (filtres post_type ou meta_boolean configurés dans Gutenberg).
+     */
+    public function getCustomFilters(array $unknownFacets): array
+    {
+        $filters = [];
+
+        if (! empty($unknownFacets['related_solutions'])) {
+            $id = (int) $unknownFacets['related_solutions'];
+            $filters[] = "metas.related_solutions = {$id}";
+        }
+
+        return $filters;
     }
 }
 ```
@@ -222,65 +206,51 @@ class ProductSearchConfig extends AbstractSearchConfig
 **Points importants :**
 - `getAjaxAction()` doit être **unique** par listing et par projet.
 - `getPostType()` doit correspondre exactement au slug du CPT WordPress.
-- Les clés de `getNumericRangeGroups()` doivent se terminer par `_range` (convention du composant JS).
-- Le champ Meilisearch (`metas.price`) doit exister dans l'index (voir Étape 3).
+- `getCustomFilters()` est requis uniquement si des filtres `post_type` ou `meta_boolean` sont utilisés dans Gutenberg (voir [Filtres custom](#filtres-custom-post_type-meta_boolean)).
 
 ---
 
-### Étape 2 — Enregistrer le handler AJAX (Hook Pollora)
+### Étape 2 — Enregistrer les handlers
 
 Créer un Hook Pollora dans `app/Cms/Hooks/Search/` :
 
 ```php
 <?php
-// app/Cms/Hooks/Search/ProductFacetsHook.php
+// app/Cms/Hooks/Search/ReferenceFacetsHook.php
 
 declare(strict_types=1);
 
 namespace App\Cms\Hooks\Search;
 
 use AmphiBee\MeilisearchFacets\Ajax\FacetsAjaxHandler;
-use App\Search\ProductSearchConfig;
+use AmphiBee\MeilisearchFacets\Registry\FacetedListingRegistry;
+use App\Search\ReferenceSearchConfig;
 use Pollora\Attributes\Action;
 
-class ProductFacetsHook
+class ReferenceFacetsHook
 {
-    /**
-     * Enregistre l'action AJAX WordPress pour ce listing.
-     * Déclenché sur 'init' pour que les actions wp_ajax_* soient disponibles.
-     */
     #[Action('init')]
     public function registerAjaxHandler(): void
     {
-        FacetsAjaxHandler::register(new ProductSearchConfig());
+        if (! in_array('meilisearch-facets/meilisearch-facets.php', (array) get_option('active_plugins', []), true)) {
+            return;
+        }
+
+        $config = new ReferenceSearchConfig();
+
+        // Enregistre l'action WordPress wp_ajax_* pour les requêtes AJAX
+        FacetsAjaxHandler::register($config);
+
+        // Enregistre la config dans le registre pour que le bloc Gutenberg
+        // puisse retrouver la bonne action AJAX à partir du slug CPT
+        FacetedListingRegistry::register('reference', $config);
     }
 }
 ```
 
+> La clé passée à `FacetedListingRegistry::register()` doit correspondre exactement au slug CPT qui sera saisi dans la sidebar du bloc Gutenberg.
+
 > Pollora découvre automatiquement les classes dans `app/Cms/Hooks/` grâce à son système de découverte basé sur les attributs PHP. Aucune déclaration supplémentaire n'est nécessaire.
-
-**Ajout optionnel — support des URLs partageables avec filtres pré-appliqués :**
-
-Si vous souhaitez qu'un filtre actif dans l'URL (ex: `?_search_product-category=tshirt`) soit pré-appliqué dès le chargement serveur (SEO, partage de lien), ajouter le hook suivant :
-
-```php
-use AmphiBee\MeilisearchFacets\Hooks\QueryIntegration;
-use Pollora\Attributes\Filter;
-
-// Dans ProductFacetsHook :
-
-/**
- * Injecte les paramètres $_GET dans les args WP_Query du chargement initial.
- * Nommer le filtre de façon unique par listing : '{projet}_get_{cpt}s_query_args'.
- */
-#[Filter('myproject_get_products_query_args', priority: 10)]
-public function buildQueryArgs(array $args): array
-{
-    return QueryIntegration::apply($args, new ProductSearchConfig());
-}
-```
-
-Ce filtre est alors appliqué dans le template Blade via `apply_filters('myproject_get_products_query_args', [...])` avant l'instanciation de `WP_Query`. Si le chargement initial est entièrement délégué à Alpine (grille vide, premier `refresh()` au `init`), ce hook n'est pas nécessaire.
 
 ---
 
@@ -289,110 +259,251 @@ Ce filtre est alors appliqué dans le template Blade via `apply_filters('myproje
 Lancer la commande Artisan fournie par le plugin pour configurer automatiquement l'index :
 
 ```bash
-php artisan meilisearch-facets:configure "App\Search\ProductSearchConfig"
+php artisan meilisearch-facets:configure "App\Search\ReferenceSearchConfig"
 ```
 
 Cette commande configure dans l'index Meilisearch :
-- **Attributs filtrables** : `terms.taxonomy`, `terms.slug`, `post_type`, `post_status`, + les champs numériques déclarés (`metas.price`)
+- **Attributs filtrables** : `terms.taxonomy`, `terms.slug`, `post_type`, `post_status`, + les champs numériques déclarés
 - **Attributs triables** : `post_title`, `post_date`, + les champs numériques
 - **Ranking rules** : `sort` en premier (pour que le tri explicite prime sur la pertinence)
 
 > Relancer cette commande à chaque ajout de nouveau champ numérique.
 
-Si les metas numériques (`metas.price`) ne sont pas encore dans l'index, il faut les y pousser. Voir [Pousser des metas numériques dans l'index](#pousser-des-metas-numériques-dans-lindex).
-
 ---
 
-### Étape 4 — Construire le template Blade
+### Étape 4 — Créer les vues du thème
 
-Le composant JS s'appuie sur une structure HTML précise. Voici un template minimal :
+Le plugin appelle deux vues Blade qui doivent exister dans le thème. Sans elles, les blocs Gutenberg ne rendent rien.
+
+#### `resources/views/blocks/meilisearch/grid.blade.php`
+
+Vue du bloc conteneur. Reçoit `$attributes` (valeurs de la sidebar Gutenberg) et `$content` (HTML des filtres déjà rendu par les blocs enfants).
 
 ```blade
-{{-- themes/{theme}/resources/views/blocks/listings/products.blade.php --}}
+@php
+    use AmphiBee\MeilisearchFacets\Registry\FacetedListingRegistry;
 
-{{--
-    Conteneur principal du composant MeilisearchFacets.
-    data-ajax-action : correspond à getAjaxAction() dans la config.
-    x-cloak         : masque la section jusqu'à ce qu'Alpine soit prêt.
---}}
+    $postType    = $attributes['postType'] ?? '';
+    $gridColumns = $attributes['gridColumns'] ?? '3';
+    $hitsPerPage = $attributes['hitsPerPage'] ?? 12;
+    $ajaxAction  = FacetedListingRegistry::getAjaxAction($postType);
+@endphp
+
 <section
     x-data="MeilisearchFacets()"
-    data-ajax-action="myproject_products_facets"
+    data-ajax-action="{{ $ajaxAction }}"
+    data-hits-per-page="{{ $hitsPerPage }}"
     x-cloak
 >
-    {{-- ===== FILTRES ===== --}}
-    {{--
-        Convention de nommage des inputs :
-        - Taxonomie : name="_search_{slug-taxonomie}"
-        - Plage num. : name="{clé_groupe}" (ex: price_range)
-        - Recherche   : name="search_query"
-        - Tri         : name="order"
-    --}}
-
-    {{-- Filtre par taxonomie --}}
-    <select name="_search_product-category">
-        <option value="">Toutes les catégories</option>
-        @foreach(get_terms(['taxonomy' => 'product-category', 'hide_empty' => true]) as $term)
-            <option value="{{ $term->slug }}">{{ $term->name }}</option>
-        @endforeach
-    </select>
-
-    {{-- Filtre numérique par plage de prix (checkboxes) --}}
-    <fieldset>
-        <legend>Prix</legend>
-        <label><input type="checkbox" name="price_range" value="0-50">   Moins de 50 €</label>
-        <label><input type="checkbox" name="price_range" value="50-100"> 50 – 100 €</label>
-        <label><input type="checkbox" name="price_range" value="100-200">100 – 200 €</label>
-        <label><input type="checkbox" name="price_range" value="200+">   200 € et plus</label>
-    </fieldset>
-
-    {{-- Recherche textuelle --}}
-    <input type="search" name="search_query" placeholder="Rechercher...">
-
-    {{-- ===== GRILLE ===== --}}
-    {{-- x-ref="grid" est obligatoire. Le contenu est injecté par AJAX au init. --}}
-    <div class="grid" x-ref="grid">
-        {{-- Rempli dynamiquement par MeilisearchFacets via AJAX --}}
+    <div class="filters">
+        {!! $content !!}
     </div>
 
-    {{-- ===== PAGINATION ===== --}}
-    {{-- x-ref="pagination" est obligatoire --}}
+    <div class="grid grid-cols-{{ $gridColumns }}" x-ref="grid"></div>
+
     <div x-ref="pagination"></div>
 </section>
 ```
 
-**Points importants :**
-- `x-data="MeilisearchFacets()"` initialise le composant Alpine. Au `init`, il déclenche automatiquement une première requête AJAX pour remplir la grille.
-- `data-ajax-action` doit correspondre exactement à `getAjaxAction()`.
-- `x-ref="grid"` et `x-ref="pagination"` sont requis par le composant JS — il injecte directement le HTML retourné par le serveur dans ces éléments.
-- `x-cloak` masque la section jusqu'à ce qu'Alpine soit initialisé, évitant un flash de contenu vide.
+#### `resources/views/blocks/meilisearch/filter.blade.php`
 
----
+Vue de chaque bloc filtre enfant. Reçoit `$attributes` (configuration du filtre dans la sidebar).
 
-### Étape 5 — Initialiser le composant Alpine.js
+```blade
+@php
+    $displayType = $attributes['displayType'] ?? 'select';
+    $dataType    = $attributes['dataType'] ?? 'taxonomy';
+    $source      = $attributes['source'] ?? '';
+    $inputName   = $attributes['inputName'] ?? '';
+    $label       = $attributes['label'] ?? '';
+    $placeholder = $attributes['placeholder'] ?: $label;
 
-Importer et enregistrer le composant dans le fichier JS principal du thème :
+    $options = match ($dataType) {
+        'taxonomy'  => get_terms(['taxonomy' => $source, 'hide_empty' => true, 'orderby' => 'name']),
+        'post_type' => get_posts(['post_type' => $source, 'posts_per_page' => -1, 'orderby' => 'title', 'order' => 'ASC']),
+        default     => [],
+    };
+@endphp
+
+@if ($dataType === 'meta_boolean')
+    <label>
+        <input type="checkbox" name="{{ $inputName }}" value="1">
+        {{ $label }}
+    </label>
+
+@elseif ($displayType === 'select')
+    <div class="filter-group">
+        <label>{{ $label }}</label>
+        <select name="{{ $inputName }}">
+            <option value="">{{ $placeholder }}</option>
+            @foreach ($options as $option)
+                <option value="{{ $dataType === 'taxonomy' ? $option->slug : $option->ID }}">
+                    {{ $dataType === 'taxonomy' ? $option->name : $option->post_title }}
+                </option>
+            @endforeach
+        </select>
+    </div>
+
+@elseif ($displayType === 'radio')
+    <div class="filter-group">
+        <label>{{ $label }}</label>
+        <div class="filter-pills">
+            <label><input type="radio" name="{{ $inputName }}" value=""> {{ $placeholder }}</label>
+            @foreach ($options as $option)
+                <label>
+                    <input type="radio" name="{{ $inputName }}" value="{{ $dataType === 'taxonomy' ? $option->slug : $option->ID }}">
+                    {{ $dataType === 'taxonomy' ? $option->name : $option->post_title }}
+                </label>
+            @endforeach
+        </div>
+    </div>
+
+@elseif ($displayType === 'checkbox')
+    <div class="filter-group">
+        <label>{{ $label }}</label>
+        <div class="filter-checkboxes">
+            @foreach ($options as $option)
+                <label>
+                    <input type="checkbox" name="{{ $inputName }}[]" value="{{ $dataType === 'taxonomy' ? $option->slug : $option->ID }}">
+                    {{ $dataType === 'taxonomy' ? $option->name : $option->post_title }}
+                </label>
+            @endforeach
+        </div>
+    </div>
+@endif
+```
+
+#### `resources/views/components/meilisearch/card.blade.php`
+
+Composant carte appelé depuis `renderHit()` dans chaque `SearchConfig`. À adapter selon le design du projet.
+
+```blade
+@props(['post'])
+
+<article class="card">
+    <a href="{{ get_permalink($post->ID) }}">
+        @if ($thumbnail = get_the_post_thumbnail_url($post->ID, 'medium'))
+            <img src="{{ $thumbnail }}" alt="{{ $post->post_title }}">
+        @endif
+        <h3>{{ $post->post_title }}</h3>
+    </a>
+</article>
+```
+
+Si plusieurs CPT ont des mises en page différentes, chaque `SearchConfig` peut pointer vers son propre composant (`card-reference.blade.php`, `card-product.blade.php`, etc.).
+
+#### Enregistrement du composant Alpine.js
+
+À faire une seule fois dans le JS principal du thème :
 
 ```javascript
-// themes/{theme}/resources/assets/js/frontend/app.js
-
+// resources/assets/js/frontend/app.js
 import Alpine from 'alpinejs';
-import MeilisearchFacets from '../../../../public/content/plugins/meilisearch-facets/resources/js/facets.js';
+import MeilisearchFacets from '../../../vendor/amphibee/meilisearch-facets/resources/js/facets.js';
 
 Alpine.data('MeilisearchFacets', MeilisearchFacets);
-
 Alpine.start();
 ```
 
-> Une fois le plugin installé via Composer dans `vendor/`, adapter le chemin d'import :
-> ```javascript
-> import MeilisearchFacets from '../../../vendor/amphibee/meilisearch-facets/resources/js/facets.js';
-> ```
+---
 
-Recompiler les assets :
+### Étape 5 — Configurer le bloc "Listing facetté"
 
-```bash
-npm run build
+1. Dans Gutenberg, insérer le bloc **"Listing facetté (Meilisearch)"**
+2. Dans la sidebar à droite, renseigner :
+
+| Champ | Description | Exemple |
+|---|---|---|
+| **Type de contenu (CPT slug)** | Slug enregistré dans `FacetedListingRegistry` | `reference` |
+| **Colonnes de la grille** | Nombre de colonnes sur desktop | `3` |
+| **Résultats par page** | Nombre de cartes affichées par page | `12` |
+
+La grille et la pagination sont rendues automatiquement. Les blocs enfants définissent les filtres.
+
+---
+
+### Étape 6 — Ajouter des filtres (blocs enfants)
+
+À l'intérieur du bloc "Listing facetté", cliquer sur **"+"** pour ajouter des blocs. Seul le bloc **"Filtre de facette"** est proposé.
+
+```
+┌─ Bloc "Listing facetté" ─────────────────────────────────────────┐
+│  postType=reference, gridColumns=3, hitsPerPage=12               │
+│                                                                   │
+│  ┌─ Bloc "Filtre de facette" ──────────────────────────────┐     │
+│  │  displayType=radio, dataType=taxonomy                   │     │
+│  │  source=activity-sector                                 │  →  <input type="radio" name="_search_activity-sector">
+│  │  inputName=_search_activity-sector                      │     │
+│  └─────────────────────────────────────────────────────────┘     │
+│                                                                   │
+│  ┌─ Bloc "Filtre de facette" ──────────────────────────────┐     │
+│  │  displayType=select, dataType=post_type                 │     │
+│  │  source=solution                                        │  →  <select name="related_solutions">
+│  │  inputName=related_solutions                            │     │
+│  └─────────────────────────────────────────────────────────┘     │
+│                                                                   │
+│  [Grille de résultats — remplie via AJAX]                        │
+│  [Pagination]                                                    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Chaque filtre se configure dans la sidebar :
+
+| Champ | Description |
+|---|---|
+| **Type d'affichage** | Comment les options sont rendues (`select`, `radio`, `checkbox`) |
+| **Type de données** | D'où viennent les options (`taxonomy`, `post_type`, `meta_boolean`) |
+| **Source** | Slug de la taxonomie ou du CPT |
+| **Nom de l'input** | Nom HTML — doit respecter les conventions (voir ci-dessous) |
+| **Label** | Intitulé visible dans l'interface |
+| **Texte de l'option vide** | Texte du "Tous" / option par défaut |
+
+---
+
+## Référence — Les types de filtres Gutenberg
+
+### Types d'affichage
+
+| Type | Rendu HTML | Sélection | Idéal pour |
+|---|---|---|---|
+| `select` | `<select>` | Unique | Taxonomies avec beaucoup de termes |
+| `radio` | Boutons pilules horizontaux | Unique | Taxonomies avec peu de termes (~5), inclut "Tous" automatiquement |
+| `checkbox` | Cases à cocher verticales | Multiple (tableau) | Sélection de plusieurs valeurs |
+
+### Types de données
+
+#### `taxonomy` — Taxonomie WordPress
+
+Charge les termes via `get_terms()`. Le nom de l'input **doit commencer par `_search_`** suivi du slug de la taxonomie.
+
+```
+dataType  : taxonomy
+source    : activity-sector
+inputName : _search_activity-sector
+```
+
+#### `post_type` — Type de contenu
+
+Charge les posts d'un CPT via `get_posts()`. La valeur envoyée est l'ID du post.
+Le nom de l'input correspond au champ méta stocké dans Meilisearch.
+Nécessite une implémentation dans `getCustomFilters()`.
+
+```
+dataType  : post_type
+source    : solution
+inputName : related_solutions
+```
+
+#### `meta_boolean` — Méta booléen
+
+Affiche une case à cocher unique. Quand cochée, envoie la valeur `1`.
+Nécessite une implémentation dans `getCustomFilters()`.
+
+```
+dataType  : meta_boolean
+source    : (laisser vide)
+inputName : multisiteProject
+label     : Projets multi-sites uniquement
 ```
 
 ---
@@ -423,21 +534,90 @@ Le composant JS interprète les inputs du formulaire selon ces conventions :
 
 | Pattern du `name` | Rôle | Exemple |
 |---|---|---|
-| `_search_{taxonomy}` | Filtre par taxonomie | `_search_product-category` |
+| `_search_{taxonomy}` | Filtre par taxonomie (automatique) | `_search_activity-sector` |
 | `{groupe}_range` | Filtre par plage numérique | `price_range`, `duration_range` |
 | `search_query` | Recherche textuelle libre | — |
-| `order` | Tri (valeurs: `asc`, `desc`) | — |
-| Tout autre `name` | Meta custom → transmis à `getCustomFilters()` | `multisiteProject`, `related_solutions` |
+| `order` | Tri des résultats | — |
+| Tout autre `name` | Meta custom → transmis à `getCustomFilters()` | `related_solutions`, `multisiteProject` |
 
 > Les clés des groupes dans `getNumericRangeGroups()` doivent correspondre exactement aux `name` des inputs HTML.
 
-**Comportement de la recherche textuelle :** l'input `name="search_query"` doit être de type `search` ou `text`. Le composant écoute l'événement `keydown` + `Enter` (cross-browser, y compris Firefox) et l'événement `input` lorsque le champ est vidé via le bouton ✕.
+**Comportement de la recherche textuelle :** l'input `name="search_query"` doit être de type `search` ou `text`. Le composant écoute `keydown` + `Enter` (cross-browser) et `input` lorsque le champ est vidé via le bouton ✕.
 
 ---
 
 ## Cas d'usage avancés
 
+### Filtres custom (post_type, meta_boolean)
+
+Les filtres de type `post_type` et `meta_boolean` configurés dans Gutenberg arrivent dans `getCustomFilters()` de la SearchConfig. Ils doivent y être transformés en expressions de filtre Meilisearch valides.
+
+#### 1. Déclarer les filtres dans la config
+
+```php
+public function getCustomFilters(array $unknownFacets): array
+{
+    $filters = [];
+
+    // Relationnel : valeur = ID du post lié
+    if (! empty($unknownFacets['related_solutions'])) {
+        $id = (int) $unknownFacets['related_solutions'];
+        $filters[] = "metas.related_solutions = {$id}";
+    }
+
+    // Booléen : coché = valeur "1", non coché = absent du tableau
+    if (! empty($unknownFacets['multisiteProject'])) {
+        $filters[] = 'metas.multisiteProject = 1';
+    }
+
+    return $filters;
+}
+```
+
+#### 2. S'assurer que les metas sont bien indexées
+
+Meiliscout indexe les metas via `get_post_meta($id, $key, true)`, ce qui retourne uniquement la première valeur pour les champs multi-valeur. Pour les champs stockant plusieurs IDs (Meta Box "Multiple Post"), utiliser le filtre `meiliscout/post/document` :
+
+```php
+#[Filter('meiliscout/post/document', priority: 10)]
+public function normalizeDocument(array $document, WP_Post $post): array
+{
+    if ($post->post_type !== 'your_post_type') {
+        return $document;
+    }
+
+    // Booléen : forcer la présence du champ même si jamais coché
+    $value = get_post_meta($post->ID, 'multisiteProject', true);
+    $document['metas']['multisiteProject'] = ($value !== '') ? (int) $value : 0;
+
+    // Multi-valeur : get_post_meta(..., false) retourne toutes les valeurs
+    $document['metas']['related_solutions'] = array_values(
+        array_map('intval', array_filter((array) get_post_meta($post->ID, 'related_solutions', false)))
+    );
+
+    return $document;
+}
+```
+
+> **Pourquoi ne pas lire `$document['metas']` ?** Lors de l'indexation en temps réel (`PostSingleIndexer`), Meiliscout crée une nouvelle instance de `PostIndexable` dont `$metaKeys` est vide — `getMetaData()` retourne donc `[]`. En appelant `get_post_meta()` directement, le hook fonctionne dans les deux contextes (indexation bulk et temps réel).
+
+#### 3. Configurer les attributs filtrables dans Meiliscout
+
+Dans l'admin Meiliscout, ajouter les clés **sans préfixe** (Meiliscout ajoute `metas.` automatiquement) :
+- `multisiteProject`
+- `related_solutions`
+
+Puis relancer l'indexation :
+
+```bash
+wp meiliscout index --clear
+```
+
+---
+
 ### Filtres numériques (prix, durée...)
+
+Les filtres numériques ne sont pas encore configurables depuis Gutenberg — ils se déclarent dans la `SearchConfig` et les inputs HTML correspondants sont gérés dans le template Blade du bloc.
 
 #### 1. Pousser des metas numériques dans l'index
 
@@ -473,7 +653,6 @@ class SyncProductPricesToMeilisearch extends Command
             'metas' => ['price' => (int) $row->price],
         ], $results);
 
-        // Envoi par lots de 100
         foreach (array_chunk($documents, 100) as $batch) {
             $client->updateDocuments(config('meilisearch-facets.index'), $batch);
         }
@@ -509,112 +688,20 @@ public function getNumericRangeGroups(): array
 }
 ```
 
-#### 3. Inputs HTML correspondants
+#### 3. Inputs HTML dans le template Blade du bloc
 
 ```blade
 {{-- price_range doit correspondre exactement à la clé du groupe --}}
 <label><input type="checkbox" name="price_range" value="0-50">   0 – 50 €</label>
 <label><input type="checkbox" name="price_range" value="50-100"> 50 – 100 €</label>
 <label><input type="checkbox" name="price_range" value="200+">   200 € et plus</label>
-
-<label><input type="checkbox" name="duration_range" value="1-7">  1 – 7 jours</label>
-<label><input type="checkbox" name="duration_range" value="8-14"> 8 – 14 jours</label>
-<label><input type="checkbox" name="duration_range" value="15+">  15 jours et plus</label>
-```
-
----
-
-### Filtres meta custom (booléens, relationnels)
-
-Pour les champs meta qui ne sont ni des taxonomies ni des plages numériques (ex: case à cocher booléenne, sélection d'un post lié), il faut implémenter `getCustomFilters()`.
-
-#### Principe
-
-Le composant Alpine collecte **tous** les inputs nommés dans le conteneur `x-data`. Les valeurs qui ne correspondent à aucune convention reconnue (`_search_*`, `*_range`, `search_query`, `order`) sont transmises à `getCustomFilters()` dans le tableau `$unknownFacets`.
-
-#### 1. Déclarer les filtres dans la config
-
-```php
-public function getCustomFilters(array $unknownFacets): array
-{
-    $filters = [];
-
-    // Booléen : coché = valeur "1", non coché = absent du tableau
-    if (! empty($unknownFacets['multisiteProject'])) {
-        $filters[] = 'metas.multisiteProject = 1';
-    }
-
-    // Relationnel : valeur = ID du post lié
-    if (! empty($unknownFacets['related_solutions'])) {
-        $id = (int) $unknownFacets['related_solutions'];
-        $filters[] = "metas.related_solutions = {$id}";
-    }
-
-    return $filters;
-}
-```
-
-Les chaînes retournées sont des expressions de filtre Meilisearch valides, ajoutées directement à la clause `filter` de la requête.
-
-#### 2. Inputs HTML correspondants
-
-```blade
-{{-- Booléen : name sans préfixe, value="1" --}}
-<input type="checkbox" name="multisiteProject" value="1">
-
-{{-- Relationnel : name sans préfixe, value = ID --}}
-<select name="related_solutions">
-    <option value="">Toutes les solutions</option>
-    @foreach(get_posts(['post_type' => 'solution', 'posts_per_page' => -1]) as $solution)
-        <option value="{{ $solution->ID }}">{{ $solution->post_title }}</option>
-    @endforeach
-</select>
-```
-
-#### 3. S'assurer que les metas sont bien indexées
-
-Meiliscout indexe les metas via `get_post_meta($id, $key, true)`, ce qui retourne uniquement la première valeur pour les champs multi-valeur. Pour les champs stockant plusieurs IDs (Meta Box "Multiple Post"), utiliser le filtre `meiliscout/post/document` pour corriger le document avant indexation :
-
-```php
-#[Filter('meiliscout/post/document', priority: 10)]
-public function normalizeDocument(array $document, WP_Post $post): array
-{
-    if ($post->post_type !== 'your_post_type') {
-        return $document;
-    }
-
-    // Booléen : forcer la présence du champ même si jamais coché
-    $value = get_post_meta($post->ID, 'multisiteProject', true);
-    $document['metas']['multisiteProject'] = ($value !== '') ? (int) $value : 0;
-
-    // Multi-valeur : get_post_meta(..., false) retourne toutes les valeurs
-    $document['metas']['related_solutions'] = array_values(
-        array_map('intval', array_filter((array) get_post_meta($post->ID, 'related_solutions', false)))
-    );
-
-    return $document;
-}
-```
-
-> **Pourquoi ne pas lire `$document['metas']` ?** Lors de l'indexation en temps réel (`PostSingleIndexer`), Meiliscout crée une nouvelle instance de `PostIndexable` dont `$metaKeys` est vide — `getMetaData()` retourne donc `[]`. En appelant `get_post_meta()` directement, le hook fonctionne dans les deux contextes (indexation bulk et temps réel).
-
-#### 4. Configurer les attributs filtrables dans Meiliscout
-
-Dans l'admin Meiliscout, ajouter les clés **sans préfixe** (Meiliscout ajoute `metas.` automatiquement) :
-- `multisiteProject`
-- `related_solutions`
-
-Puis relancer l'indexation :
-
-```bash
-wp meiliscout index --clear
 ```
 
 ---
 
 ### Listing sans filtres numériques
 
-Si votre listing filtre uniquement par taxonomies, il n'y a rien à faire : `getNumericRangeGroups()` retourne `[]` par défaut dans `AbstractSearchConfig`.
+Si votre listing filtre uniquement par taxonomies, `getNumericRangeGroups()` retourne `[]` par défaut dans `AbstractSearchConfig` — rien à faire.
 
 ```php
 class ArticleSearchConfig extends AbstractSearchConfig
@@ -631,7 +718,7 @@ class ArticleSearchConfig extends AbstractSearchConfig
 
     public function renderHit(array $hit): string
     {
-        return view('components.cards.post', ['id' => $hit['ID']])->render();
+        return view('components.meilisearch.card', ['post' => get_post($hit['ID'])])->render();
     }
 }
 ```
@@ -661,15 +748,98 @@ Chaque listing est **indépendant** : créer une config + un hook par listing.
 
 ```
 app/Search/
-    ReferenceSearchConfig.php   → action: 'tds_references_facets'
-    SolutionSearchConfig.php    → action: 'tds_solutions_facets'
-    ArticleSearchConfig.php     → action: 'tds_articles_facets'
+    ReferenceSearchConfig.php   → action: 'myproject_references_facets'
+    SolutionSearchConfig.php    → action: 'myproject_solutions_facets'
+    ArticleSearchConfig.php     → action: 'myproject_articles_facets'
 
 app/Cms/Hooks/Search/
     ReferenceFacetsHook.php
     SolutionFacetsHook.php
     ArticleFacetsHook.php
 ```
+
+---
+
+### Implémentation manuelle (sans Gutenberg)
+
+Si vous n'utilisez pas les blocs Gutenberg, vous pouvez construire le template Blade manuellement et initialiser le composant Alpine.js directement.
+
+#### Template Blade
+
+```blade
+{{-- themes/{theme}/resources/views/blocks/listings/products.blade.php --}}
+
+<section
+    x-data="MeilisearchFacets()"
+    data-ajax-action="myproject_products_facets"
+    x-cloak
+>
+    {{-- Filtre par taxonomie --}}
+    <select name="_search_product-category">
+        <option value="">Toutes les catégories</option>
+        @foreach(get_terms(['taxonomy' => 'product-category', 'hide_empty' => true]) as $term)
+            <option value="{{ $term->slug }}">{{ $term->name }}</option>
+        @endforeach
+    </select>
+
+    {{-- Filtre numérique par plage de prix --}}
+    <fieldset>
+        <legend>Prix</legend>
+        <label><input type="checkbox" name="price_range" value="0-50">   Moins de 50 €</label>
+        <label><input type="checkbox" name="price_range" value="50-100"> 50 – 100 €</label>
+        <label><input type="checkbox" name="price_range" value="100-200">100 – 200 €</label>
+        <label><input type="checkbox" name="price_range" value="200+">   200 € et plus</label>
+    </fieldset>
+
+    {{-- Recherche textuelle --}}
+    <input type="search" name="search_query" placeholder="Rechercher...">
+
+    {{-- x-ref="grid" et x-ref="pagination" sont obligatoires --}}
+    <div class="grid" x-ref="grid"></div>
+    <div x-ref="pagination"></div>
+</section>
+```
+
+**Points importants :**
+- `x-data="MeilisearchFacets()"` déclenche automatiquement une première requête AJAX au `init` pour remplir la grille.
+- `data-ajax-action` doit correspondre exactement à `getAjaxAction()`.
+- `x-ref="grid"` et `x-ref="pagination"` sont requis — le composant JS y injecte le HTML retourné par le serveur.
+- `x-cloak` masque la section jusqu'à ce qu'Alpine soit initialisé.
+
+#### Enregistrement du composant Alpine.js
+
+```javascript
+// themes/{theme}/resources/assets/js/frontend/app.js
+
+import Alpine from 'alpinejs';
+import MeilisearchFacets from '../../../../public/content/plugins/meilisearch-facets/resources/js/facets.js';
+
+Alpine.data('MeilisearchFacets', MeilisearchFacets);
+
+Alpine.start();
+```
+
+> Une fois le plugin installé via Composer dans `vendor/`, adapter le chemin :
+> ```javascript
+> import MeilisearchFacets from '../../../vendor/amphibee/meilisearch-facets/resources/js/facets.js';
+> ```
+
+#### URLs partageables (filtres pré-appliqués au chargement initial)
+
+Pour que les filtres actifs dans l'URL (ex: `?_search_product-category=tshirt`) soient appliqués dès le chargement serveur, ajouter ce hook :
+
+```php
+use AmphiBee\MeilisearchFacets\Hooks\QueryIntegration;
+use Pollora\Attributes\Filter;
+
+#[Filter('myproject_get_products_query_args', priority: 10)]
+public function buildQueryArgs(array $args): array
+{
+    return QueryIntegration::apply($args, new ProductSearchConfig());
+}
+```
+
+Ce filtre est appliqué dans le template Blade via `apply_filters('myproject_get_products_query_args', [...])` avant l'instanciation de `WP_Query`.
 
 ---
 
@@ -691,15 +861,25 @@ meilisearch-facets/
 │   ├── Service/
 │   │   └── FacetsSearchService.php            # Orchestration (search, getAvailableRanges, mapSlugs)
 │   ├── Ajax/
-│   │   └── FacetsAjaxHandler.php              # Handler WP AJAX générique (grille + drawer)
+│   │   └── FacetsAjaxHandler.php              # Handler WP AJAX générique
+│   ├── Blocks/
+│   │   ├── FacetedListingBlock.php            # Bloc Gutenberg conteneur
+│   │   └── FacetFilterBlock.php               # Bloc Gutenberg filtre enfant
+│   ├── Registry/
+│   │   └── FacetedListingRegistry.php         # Registre CPT slug → SearchConfig
 │   ├── Console/
 │   │   └── ConfigureIndexCommand.php          # php artisan meilisearch-facets:configure
 │   └── Hooks/
 │       └── QueryIntegration.php               # Injection $_GET → WP_Query (chargement initial)
 ├── config/
 │   └── meilisearch-facets.php                 # Config publiable (url, key, index, strategy)
-└── resources/js/
-    └── facets.js                              # Composant Alpine.js générique
+└── resources/
+    ├── js/
+    │   ├── facets.js                          # Composant Alpine.js générique
+    │   └── blocks/editor.js                  # HOC InnerBlocks pour l'éditeur Gutenberg
+    └── blocks/
+        ├── faceted-listing/block.json         # Définition du bloc conteneur
+        └── facet-filter/block.json            # Définition du bloc filtre
 ```
 
 ### Flux d'une requête AJAX
@@ -720,12 +900,10 @@ FacetsAjaxHandler::handle()
         │       └── unknownFacets   (tout le reste → meta custom)
         │
         ├── SearchConfig::getCustomFilters($unknownFacets)
-        │       └── retourne des chaînes de filtre Meilisearch brutes
         │
         ├── FacetsSearchService::search()             → hits + pagination + facetDistribution
-        │       └── buildFilters() applique customFilters directement dans la clause filter
         ├── FacetsSearchService::getAvailableRanges() → multi-search (quelles plages ont des résultats)
-        └── FacetsSearchService::mapSlugsToTaxonomies() → mapping slug → taxonomie
+        └── FacetsSearchService::mapSlugsToTaxonomies()
         │
         ▼  JSON { grid HTML, pagination HTML, availableFacets, availableRanges }
         │
@@ -755,7 +933,7 @@ Si la 404 persiste, forcer l'URL directement sur le conteneur :
 ```blade
 <div
     x-data="MeilisearchFacets()"
-    data-ajax-action="tds_references_facets"
+    data-ajax-action="myproject_references_facets"
     data-ajax-url="{{ admin_url('admin-ajax.php') }}"
 >
 ```
@@ -770,7 +948,7 @@ Si la 404 persiste, forcer l'URL directement sur le conteneur :
 
 - Relancer `php artisan meilisearch-facets:configure "App\Search\VotreSearchConfig"` après ajout des plages.
 - Vérifier que les documents ont un champ `metas.price` (ou autre) en valeur numérique, pas en string.
-- Relancer la commande de synchronisation des metas (`php artisan search:sync-products`).
+- Relancer la commande de synchronisation des metas si nécessaire.
 
 ### L'URL ne se met pas à jour
 
@@ -792,4 +970,4 @@ Si la 404 persiste, forcer l'URL directement sur le conteneur :
 
 3. **Seule la première valeur est indexée (champ multi-valeur) :** Meta Box stocke chaque ID sélectionné dans une ligne `wp_postmeta` distincte. `get_post_meta($id, $key, true)` retourne uniquement la première. Utiliser `get_post_meta($id, $key, false)` dans le filtre `meiliscout/post/document` pour récupérer toutes les valeurs sous forme de tableau.
 
-4. **Metas vides lors de l'indexation en temps réel :** `PostSingleIndexer` crée une nouvelle instance de `PostIndexable` dont `$metaKeys` n'est jamais initialisé (seul `getItems()` le fait, lors de l'indexation bulk). `getMetaData()` retourne donc `[]`. Solution : lire les meta via `get_post_meta()` directement dans le hook `meiliscout/post/document`, indépendamment de `$document['metas']`.
+4. **Metas vides lors de l'indexation en temps réel :** `PostSingleIndexer` crée une nouvelle instance de `PostIndexable` dont `$metaKeys` n'est jamais initialisé (seul `getItems()` le fait, lors de l'indexation bulk). `getMetaData()` retourne donc `[]`. Solution : lire les meta via `get_post_meta()` directement dans le hook `meiliscout/post/document`.

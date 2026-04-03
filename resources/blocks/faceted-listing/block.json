@@ -1,0 +1,28 @@
+{
+    "$schema": "https://schemas.wp.org/trunk/block.json",
+    "apiVersion": 3,
+    "name": "meta-box/faceted-listing",
+    "title": "Listing facetté (Meilisearch)",
+    "description": "Listing de contenus filtrable via Meilisearch. Ajoutez des blocs « Filtre de facette » à l'intérieur pour configurer les filtres.",
+    "category": "widgets",
+    "icon": "grid-view",
+    "keywords": ["listing", "facettes", "meilisearch", "filtres"],
+    "supports": {
+        "mode": "auto",
+        "context": "normal"
+    },
+    "attributes": {
+        "postType": {
+            "type": "string",
+            "default": ""
+        },
+        "hitsPerPage": {
+            "type": "number",
+            "default": 12
+        },
+        "gridColumns": {
+            "type": "string",
+            "default": "3"
+        }
+    }
+}

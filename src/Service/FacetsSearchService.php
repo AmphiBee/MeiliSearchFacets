@@ -28,9 +28,11 @@ class FacetsSearchService
     ): SearchResult {
         $filters = $this->buildFilters($config, $request);
 
+        $hitsPerPage = $request->hitsPerPage ?? $config->getHitsPerPage();
+
         $params = [
             'q'           => $request->query,
-            'hitsPerPage' => $config->getHitsPerPage(),
+            'hitsPerPage' => $hitsPerPage,
             'page'        => $request->page,
             'filter'      => implode(' AND ', $filters),
         ];
@@ -51,7 +53,6 @@ class FacetsSearchService
         $data = $this->client->search($config->getIndex(), $params);
 
         $total = $data['totalHits'] ?? ($data['estimatedTotalHits'] ?? 0);
-        $hitsPerPage = $config->getHitsPerPage();
 
         return new SearchResult(
             hits: $data['hits'] ?? [],

@@ -42,5 +42,11 @@ final readonly class SearchRequest
          * Ex: ['multisiteProject = "1"']
          */
         public array $customFilters = [],
+
+        /**
+         * Nombre de résultats par page, défini par le bloc Gutenberg.
+         * Null = utilise la valeur de SearchConfigInterface::getHitsPerPage().
+         */
+        public ?int $hitsPerPage = null,
     ) {}
 }

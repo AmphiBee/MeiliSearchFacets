@@ -1,0 +1,41 @@
+{
+    "$schema": "https://schemas.wp.org/trunk/block.json",
+    "apiVersion": 3,
+    "name": "meta-box/facet-filter",
+    "title": "Filtre de facette",
+    "description": "Filtre individuel à insérer dans un bloc « Listing facetté ». Configurez le type d'affichage (select, radio, checkbox) et la source des données (taxonomie, CPT, méta).",
+    "category": "widgets",
+    "icon": "filter",
+    "keywords": ["filtre", "facette", "select", "checkbox", "radio"],
+    "parent": ["meta-box/faceted-listing"],
+    "supports": {
+        "mode": "auto",
+        "context": "side"
+    },
+    "attributes": {
+        "displayType": {
+            "type": "string",
+            "default": "select"
+        },
+        "dataType": {
+            "type": "string",
+            "default": "taxonomy"
+        },
+        "source": {
+            "type": "string",
+            "default": ""
+        },
+        "inputName": {
+            "type": "string",
+            "default": ""
+        },
+        "label": {
+            "type": "string",
+            "default": ""
+        },
+        "placeholder": {
+            "type": "string",
+            "default": ""
+        }
+    }
+}

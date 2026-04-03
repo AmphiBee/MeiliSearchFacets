@@ -76,6 +76,7 @@ export default function MeilisearchFacets() {
             const extraDatas = {
                 page,
                 search: this._getSearchQuery(),
+                hitsPerPage: this.hitsPerPage,
             };
 
             try {

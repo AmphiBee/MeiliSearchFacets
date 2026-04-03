@@ -49,6 +49,9 @@ class FacetsAjaxHandler
         $page          = max(1, (int) ($_POST['extra_datas']['page'] ?? 1));
         $searchQuery   = sanitize_text_field($_POST['extra_datas']['search'] ?? '');
         $facetLocation = sanitize_text_field($_POST['extra_datas']['facet_location'] ?? 'grid');
+        $hitsPerPage   = isset($_POST['extra_datas']['hitsPerPage'])
+            ? max(1, (int) $_POST['extra_datas']['hitsPerPage'])
+            : null;
 
         [$taxonomyFilters, $numericFilters, $sort, $unknownFacets] = $this->parseFacets($facets);
 
@@ -59,6 +62,7 @@ class FacetsAjaxHandler
             page: $page,
             sort: $sort,
             customFilters: $this->config->getCustomFilters($unknownFacets),
+            hitsPerPage: $hitsPerPage,
         );
 
         try {
