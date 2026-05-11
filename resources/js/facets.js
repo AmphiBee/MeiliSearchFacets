@@ -53,11 +53,36 @@ export default function MeilisearchFacets() {
             this._attachFilterListeners();
             this._attachPaginationListener();
             this.refresh(this._getCurrentPage());
+            this.$el.addEventListener('facets:reset', () => this.resetFilters());
         },
 
         // ----------------------------------------------------------------
         // API publique
         // ----------------------------------------------------------------
+
+        /**
+         * Remet tous les filtres à zéro et recharge la grille à la page 1.
+         */
+        resetFilters() {
+            this.$el.querySelectorAll('select[name]').forEach(select => {
+                if (select.tomselect) {
+                    select.tomselect.setValue('');
+                } else {
+                    select.value = '';
+                }
+            });
+
+            this.$el.querySelectorAll('input[type="checkbox"], input[type="radio"]').forEach(input => {
+                input.checked = false;
+            });
+
+            const searchInput = this.$el.querySelector('input[name="search_query"]');
+            if (searchInput) {
+                searchInput.value = '';
+            }
+
+            this.refresh(1);
+        },
 
         /**
          * Déclenche une nouvelle recherche pour la page donnée.
