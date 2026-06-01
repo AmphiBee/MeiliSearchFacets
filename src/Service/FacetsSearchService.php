@@ -117,6 +117,53 @@ class FacetsSearchService
     }
 
     /**
+     * Vérifie en un seul appel Meilisearch (multi-search) le nombre de résultats
+     * pour chaque payload de probe. Utilisé par handleProbe() pour remplacer N
+     * requêtes AJAX individuelles par une seule.
+     *
+     * @param  array<int, SearchRequest>  $requests  Tableau indexé de SearchRequest (un par option à sonder)
+     * @return array<int, int>  index => nombre de résultats
+     */
+    public function multiProbeCount(SearchConfigInterface $config, array $requests): array
+    {
+        if (empty($requests)) {
+            return [];
+        }
+
+        $queries = [];
+        $indices = [];
+
+        foreach ($requests as $index => $request) {
+            $filters = $this->buildFilters($config, $request);
+
+            $query = [
+                'indexUid'    => $config->getIndex(),
+                'q'           => $request->query,
+                'filter'      => implode(' AND ', $filters),
+                'hitsPerPage' => 1,
+                'page'        => 1,
+            ];
+
+            if (! empty($request->query)) {
+                $query['matchingStrategy'] = config('meilisearch-facets.search.matching_strategy', 'last');
+            }
+
+            $queries[] = $query;
+            $indices[] = $index;
+        }
+
+        $results = $this->client->multiSearch($queries);
+
+        $counts = [];
+        foreach ($indices as $i => $index) {
+            $result     = $results[$i] ?? [];
+            $counts[$index] = $result['totalHits'] ?? ($result['estimatedTotalHits'] ?? 0);
+        }
+
+        return $counts;
+    }
+
+    /**
      * Mappe des slugs de termes vers leurs taxonomies WordPress.
      * Utilisé pour construire la réponse availableFacets depuis facetDistribution.
      *

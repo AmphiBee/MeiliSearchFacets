@@ -24,6 +24,7 @@
 export default function MeilisearchFacets() {
     return {
         loading: false,
+        _filterDebounceTimer: null,
 
         // ----------------------------------------------------------------
         // Accesseurs de config (lus depuis les data-attributes du conteneur)
@@ -64,6 +65,9 @@ export default function MeilisearchFacets() {
          * Remet tous les filtres à zéro et recharge la grille à la page 1.
          */
         resetFilters() {
+            clearTimeout(this._filterDebounceTimer);
+            this._filterDebounceTimer = null;
+
             this.$el.querySelectorAll('select[name]').forEach(select => {
                 if (select.tomselect) {
                     select.tomselect.setValue('');
@@ -247,7 +251,10 @@ export default function MeilisearchFacets() {
             );
 
             inputs.forEach(input => {
-                input.addEventListener('change', () => this.refresh(1));
+                input.addEventListener('change', () => {
+                    clearTimeout(this._filterDebounceTimer);
+                    this._filterDebounceTimer = setTimeout(() => this.refresh(1), 150);
+                });
             });
 
             const searchInput = this.$el.querySelector('input[name="search_query"]');

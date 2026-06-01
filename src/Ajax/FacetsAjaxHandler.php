@@ -32,6 +32,9 @@ class FacetsAjaxHandler
 
         add_action("wp_ajax_{$action}", [$handler, 'handle']);
         add_action("wp_ajax_nopriv_{$action}", [$handler, 'handle']);
+
+        add_action("wp_ajax_{$action}_probe", [$handler, 'handleProbe']);
+        add_action("wp_ajax_nopriv_{$action}_probe", [$handler, 'handleProbe']);
     }
 
     /**
@@ -134,6 +137,55 @@ class FacetsAjaxHandler
             'availableFacets' => $availableFacets,
             'availableRanges' => $availableRanges,
         ]);
+    }
+
+    /**
+     * Reçoit N payloads de facettes et retourne en un seul appel Meilisearch (multi-search)
+     * le nombre de résultats pour chacun. Utilisé par le JS pour activer/désactiver
+     * les options de filtres sans envoyer N requêtes AJAX individuelles.
+     *
+     * Paramètres POST attendus :
+     *   - probes (array)   : tableau indexé de tableaux de facettes (même format que 'facets' dans handle())
+     *   - search (string)  : texte de recherche libre
+     */
+    public function handleProbe(): void
+    {
+        $rawProbes   = $_POST['probes'] ?? [];
+        $searchQuery = sanitize_text_field($_POST['search'] ?? '');
+
+        if (! is_array($rawProbes) || empty($rawProbes)) {
+            wp_send_json_success([]);
+            return;
+        }
+
+        $requests = [];
+        foreach ($rawProbes as $index => $rawFacets) {
+            if (! is_array($rawFacets)) {
+                continue;
+            }
+
+            $facets = $this->sanitizeFacets($rawFacets);
+            [$taxonomyFilters, $numericFilters, $sort, $unknownFacets] = $this->parseFacets($facets);
+
+            $requests[(int) $index] = new SearchRequest(
+                query: $searchQuery,
+                taxonomyFilters: $taxonomyFilters,
+                numericFilters: $numericFilters,
+                page: 1,
+                sort: $sort,
+                customFilters: $this->config->getCustomFilters($unknownFacets),
+                hitsPerPage: 1,
+            );
+        }
+
+        try {
+            $counts = $this->service->multiProbeCount($this->config, $requests);
+        } catch (\Throwable $e) {
+            wp_send_json_error(['message' => $e->getMessage()]);
+            return;
+        }
+
+        wp_send_json_success($counts);
     }
 
     /**
