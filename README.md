@@ -27,7 +27,8 @@ Plugin Composer réutilisable pour ajouter un système de **filtres/facettes Mei
    - [Plusieurs listings sur un même projet](#plusieurs-listings-sur-un-même-projet)
    - [Implémentation manuelle (sans Gutenberg)](#implémentation-manuelle-sans-gutenberg)
 9. [Architecture interne](#architecture-interne)
-10. [Résolution de problèmes](#résolution-de-problèmes)
+10. [Migrer vers MeiliScout 2.0](#migrer-vers-meiliscout-20)
+11. [Résolution de problèmes](#résolution-de-problèmes)
 
 ---
 
@@ -35,9 +36,8 @@ Plugin Composer réutilisable pour ajouter un système de **filtres/facettes Mei
 
 - Projet Pollora (Laravel 12 + WordPress 6+)
 - Meilisearch accessible (local ou distant)
-- Plugin MeiliScout installé et configuré pour indexer les posts WordPress
-  - Les documents indexés doivent contenir un champ `terms` de la forme `[{taxonomy, slug, name}]`
-  - Les metas numériques filtrables doivent être dans un objet `metas` (ex: `metas.price`)
+- Plugin MeiliScout installé et configuré pour indexer les posts WordPress (2.0 recommandé, 1.x encore pris en charge)
+  - Les metas filtrables ou triables doivent être sélectionnées dans MeiliScout › Contenus › Clés méta : elles sont indexées dans un objet `metas` (ex: `metas.price`), en nombre quand la valeur est numérique
 - AlpineJS chargé dans le thème
 
 ---
@@ -95,18 +95,22 @@ Cela crée `config/meilisearch-facets.php` dans le projet.
 
 ### Variables d'environnement (`.env`)
 
+Toutes facultatives avec MeiliScout : sans `MEILI_HOST` ni `MEILI_KEY`, le plugin prend l'hôte et la clé de MeiliScout (sa clé de recherche si elle est réglée).
+
 ```dotenv
 MEILI_HOST=http://localhost:7700
 MEILI_KEY=votre_master_key_ou_search_key
-MEILI_INDEX_NAME=posts
+MEILI_INDEX_NAME=posts            # sans MeiliScout 2.0 seulement
 MEILI_MATCHING_STRATEGY=last
 ```
+
+Avec MeiliScout 2.0, l'index interrogé est celui que MeiliScout lit (`IndexNames::active('posts')`, préfixé par le domaine du site, celui qui est actif pendant une migration) : `MEILI_INDEX_NAME` est ignoré. Pour un autre index, surcharger `getIndex()` dans la config du listing.
 
 ### `config/meilisearch-facets.php`
 
 ```php
 return [
-    'url'    => env('MEILI_HOST', 'http://localhost:7700'),
+    'url'    => env('MEILI_HOST'),
     'key'    => env('MEILI_KEY'),
     'index'  => env('MEILI_INDEX_NAME', 'posts'),
     'search' => [
@@ -256,16 +260,18 @@ class ReferenceFacetsHook
 
 ### Étape 3 — Configurer l'index Meilisearch
 
-Lancer la commande Artisan fournie par le plugin pour configurer automatiquement l'index :
-
 ```bash
 php artisan meilisearch-facets:configure "App\Search\ReferenceSearchConfig"
 ```
 
-Cette commande configure dans l'index Meilisearch :
-- **Attributs filtrables** : `terms.taxonomy`, `terms.slug`, `post_type`, `post_status`, + les champs numériques déclarés
-- **Attributs triables** : `post_title`, `post_date`, + les champs numériques
-- **Ranking rules** : `sort` en premier (pour que le tri explicite prime sur la pertinence)
+**Avec MeiliScout 2.0**, la commande ne modifie rien : elle vérifie. MeiliScout paramètre lui-même son index à chaque indexation complète (sur un nouvel index, activé à la fin) : un réglage ajouté à la main serait perdu, et remplacer les attributs triables casserait les tris de `WP_Query`. Ce qui est déjà couvert :
+- **Filtrables** : `post_type`, `post_status`, `taxonomies` (donc `taxonomies.<taxonomie>.slug`), les clés méta sélectionnées (`metas.<clé>`)
+- **Triables** : `post_title_sort` (titre sans accents ni majuscules), `post_date`, les clés méta sélectionnées
+- **Ranking rules** : `sort` en premier
+
+La commande signale chaque attribut du listing qui manque (en pratique une clé méta à sélectionner dans MeiliScout › Contenus › Clés méta, suivie d'une indexation complète) et sort en erreur.
+
+**Sans MeiliScout 2.0**, elle configure l'index comme avant : attributs filtrables `terms.taxonomy`, `terms.slug`, `post_type`, `post_status` + les champs numériques (fusionnés avec l'existant), attributs triables `post_title`, `post_date` + les champs numériques, ranking rules avec `sort` en premier.
 
 > Relancer cette commande à chaque ajout de nouveau champ numérique.
 
@@ -869,6 +875,8 @@ meilisearch-facets/
 │   │   └── FacetedListingRegistry.php         # Registre CPT slug → SearchConfig
 │   ├── Console/
 │   │   └── ConfigureIndexCommand.php          # php artisan meilisearch-facets:configure
+│   ├── Support/
+│   │   └── MeiliScout.php                     # Index, filtres et facettes selon la version de MeiliScout
 │   └── Hooks/
 │       └── QueryIntegration.php               # Injection $_GET → WP_Query (chargement initial)
 ├── config/
@@ -914,6 +922,36 @@ facets.js — met à jour x-ref="grid", x-ref="pagination"
 
 ---
 
+## Migrer vers MeiliScout 2.0
+
+MeiliScout 2.0 change l'index et la forme des termes. Le plugin s'y adapte seul : index actif de MeiliScout, filtres et facettes par taxonomie (`taxonomies.<taxonomie>.slug`), tri par `post_title_sort`, hôte et clé de MeiliScout à défaut de `MEILI_HOST` / `MEILI_KEY`. Il garde le comportement d'avant tant que l'index actif est un index 1.x (avant la première indexation complète en 2.0).
+
+Reste à reprendre dans le projet :
+
+1. **Filtres custom sur les termes.** `terms.taxonomy` et `terms.slug` ne sont plus filtrables. Remplacer les filtres écrits à la main par `MeiliScout::taxonomyFilter()`, qui produit la bonne syntaxe pour l'index actif, 1.x ou 2.0 :
+
+   ```php
+   use AmphiBee\MeilisearchFacets\Support\MeiliScout;
+
+   // Avant
+   $filters[] = "(terms.taxonomy = 'category' AND terms.slug IN ['{$slugList}'])";
+   $filters[] = "NOT (terms.taxonomy = 'category' AND terms.slug IN ['{$slugList}'])";
+
+   // Après
+   $filters[] = MeiliScout::taxonomyFilter('category', $slugs);
+   $filters[] = 'NOT (' . MeiliScout::taxonomyFilter('category', $slugs) . ')';
+   ```
+
+   Le filtre 1.x était d'ailleurs imprécis : Meilisearch aplatit la liste `terms`, et un terme homonyme dans une autre taxonomie le satisfaisait.
+
+2. **Taxonomies des facettes.** Chaque taxonomie a maintenant sa facette : seules celles de `getFilterableTaxonomies()` sont calculées. Y déclarer toute taxonomie utilisée par un bloc filtre (`_search_<taxonomie>`).
+
+3. **Rendu des hits.** `ID`, `post_author`, `menu_order`… sont des nombres ; `terms` reste présent dans les documents, `taxonomies` les groupe par taxonomie.
+
+4. **Après la mise à jour**, lancer une indexation complète (`wp meiliscout index`), puis `php artisan meilisearch-facets:configure` pour chaque listing afin de vérifier les réglages.
+
+---
+
 ## Résolution de problèmes
 
 ### Le composant JS ne se déclenche pas
@@ -940,9 +978,10 @@ Si la 404 persiste, forcer l'URL directement sur le conteneur :
 
 ### Les requêtes AJAX retournent 0 résultats
 
-- Vérifier que `MEILI_INDEX_NAME` correspond à l'index réel dans Meilisearch.
+- Sans MeiliScout 2.0 : vérifier que `MEILI_INDEX_NAME` correspond à l'index réel dans Meilisearch.
 - Vérifier que les documents indexés ont bien `post_type = "{votre_cpt}"` et `post_status = "publish"`.
-- Vérifier que `terms` est bien présent dans les documents indexés (relancer `wp meiliscout index --clear`).
+- Vérifier que les termes sont présents dans les documents indexés (`taxonomies` avec MeiliScout 2.0, `terms` avant ; relancer `wp meiliscout index`).
+- Un filtre custom écrit à la main sur `terms.taxonomy` / `terms.slug` échoue avec MeiliScout 2.0 (« Attribute `terms.taxonomy` is not filterable ») : voir [Migrer vers MeiliScout 2.0](#migrer-vers-meiliscout-20).
 
 ### Les filtres numériques ne fonctionnent pas
 

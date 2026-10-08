@@ -4,7 +4,7 @@
  * Plugin Name: Meilisearch Facets
  * Plugin URI:  https://github.com/amphibee/meilisearch-facets
  * Description: Système de filtres/facettes Meilisearch réutilisable pour les projets Pollora.
- * Version:     1.0.0
+ * Version:     1.1.0
  * Author:      AmphiBee
  * License:     MIT
  */

@@ -28,5 +28,11 @@ final readonly class SearchResult
          * Ex: ['finance' => 12, 'industrie' => 8]
          */
         public array $facetDistribution = [],
+
+        /**
+         * Slugs des termes présents dans les résultats, par taxonomie (uniquement si $includeFacets = true).
+         * Format : ['activity-sector' => ['finance', 'industrie']]
+         */
+        public array $availableFacets = [],
     ) {}
 }

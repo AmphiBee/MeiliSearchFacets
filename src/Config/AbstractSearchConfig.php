@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AmphiBee\MeilisearchFacets\Config;
 
+use AmphiBee\MeilisearchFacets\Support\MeiliScout;
+
 /**
  * Implémentation de base avec des valeurs par défaut sensées.
  * Étendre cette classe et surcharger uniquement ce dont vous avez besoin.
@@ -11,12 +13,14 @@ namespace AmphiBee\MeilisearchFacets\Config;
 abstract class AbstractSearchConfig implements SearchConfigInterface
 {
     /**
-     * Retourne le nom de l'index depuis la config Laravel.
+     * L'index des posts lu par les recherches de MeiliScout 2.0 (préfixé, celui
+     * qui est actif pendant une migration) ; sans lui, celui de la config Laravel.
      * Peut être surchargé si un listing utilise un index différent.
      */
     public function getIndex(): string
     {
-        return config('meilisearch-facets.index', env('MEILI_INDEX_NAME', 'posts'));
+        return MeiliScout::postsIndex()
+            ?? (string) config('meilisearch-facets.index', env('MEILI_INDEX_NAME', 'posts'));
     }
 
     /**
@@ -50,7 +54,15 @@ abstract class AbstractSearchConfig implements SearchConfigInterface
      */
     public function getFilterableAttributes(): array
     {
-        $attrs = ['terms.taxonomy', 'terms.slug', 'post_type', 'post_status'];
+        $attrs = ['post_type', 'post_status'];
+
+        if (MeiliScout::groupsTermsByTaxonomy()) {
+            foreach ($this->getFilterableTaxonomies() as $taxonomy) {
+                $attrs[] = "taxonomies.{$taxonomy}.slug";
+            }
+        } else {
+            array_push($attrs, 'terms.taxonomy', 'terms.slug');
+        }
 
         foreach ($this->getNumericRangeGroups() as $ranges) {
             foreach ($ranges as $range) {
@@ -67,7 +79,7 @@ abstract class AbstractSearchConfig implements SearchConfigInterface
      */
     public function getSortableAttributes(): array
     {
-        $attrs = ['post_title', 'post_date'];
+        $attrs = [MeiliScout::titleSortAttribute(), 'post_date'];
 
         foreach ($this->getNumericRangeGroups() as $ranges) {
             foreach ($ranges as $range) {

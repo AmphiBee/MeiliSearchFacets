@@ -7,6 +7,7 @@ namespace AmphiBee\MeilisearchFacets\Ajax;
 use AmphiBee\MeilisearchFacets\Config\SearchConfigInterface;
 use AmphiBee\MeilisearchFacets\DTO\SearchRequest;
 use AmphiBee\MeilisearchFacets\Service\FacetsSearchService;
+use AmphiBee\MeilisearchFacets\Support\MeiliScout;
 
 /**
  * Handler AJAX WordPress générique pour un listing facetté.
@@ -75,11 +76,7 @@ class FacetsAjaxHandler
             return;
         }
 
-        // Mapper les slugs de facettes vers leurs taxonomies
-        $availableFacets = [];
-        if (! empty($result->facetDistribution)) {
-            $availableFacets = $this->service->mapSlugsToTaxonomies(array_keys($result->facetDistribution));
-        }
+        $availableFacets = $result->availableFacets;
 
         // Calculer les plages numériques disponibles pour chaque groupe
         $availableRanges = [];
@@ -252,9 +249,11 @@ class FacetsAjaxHandler
      */
     private function resolveSort(string $order): array
     {
+        $title = MeiliScout::titleSortAttribute();
+
         return match ($order) {
-            'asc'  => ['post_title:asc'],
-            'desc' => ['post_title:desc'],
+            'asc'  => ["{$title}:asc"],
+            'desc' => ["{$title}:desc"],
             default => $this->config->getDefaultSort(),
         };
     }
