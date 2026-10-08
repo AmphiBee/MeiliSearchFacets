@@ -8,6 +8,7 @@ use AmphiBee\MeilisearchFacets\Client\MeilisearchClient;
 use AmphiBee\MeilisearchFacets\Config\SearchConfigInterface;
 use AmphiBee\MeilisearchFacets\DTO\SearchRequest;
 use AmphiBee\MeilisearchFacets\DTO\SearchResult;
+use AmphiBee\MeilisearchFacets\Support\MeiliScout;
 
 /**
  * Orchestre les requêtes Meilisearch pour un listing facetté.
@@ -46,20 +47,33 @@ class FacetsSearchService
             $params['sort'] = $sort;
         }
 
-        if ($includeFacets) {
-            $params['facets'] = ['terms.slug'];
+        $facetAttributes = [];
+        if ($includeFacets && ! MeiliScout::groupsTermsByTaxonomy()) {
+            // Index d'avant MeiliScout 2.0 : une facette pour toutes les taxonomies
+            $facetAttributes = ['*' => 'terms.slug'];
+        } elseif ($includeFacets) {
+            foreach ($config->getFilterableTaxonomies() as $taxonomy) {
+                $facetAttributes[$taxonomy] = MeiliScout::taxonomyFacet($taxonomy);
+            }
+        }
+
+        if ($facetAttributes !== []) {
+            $params['facets'] = array_values($facetAttributes);
         }
 
         $data = $this->client->search($config->getIndex(), $params);
 
         $total = $data['totalHits'] ?? ($data['estimatedTotalHits'] ?? 0);
 
+        [$facetDistribution, $availableFacets] = $this->readFacets($data['facetDistribution'] ?? [], $facetAttributes);
+
         return new SearchResult(
             hits: $data['hits'] ?? [],
             total: $total,
             totalPages: $data['totalPages'] ?? (int) ceil($total / $hitsPerPage),
             currentPage: $request->page,
-            facetDistribution: $data['facetDistribution']['terms.slug'] ?? [],
+            facetDistribution: $facetDistribution,
+            availableFacets: $availableFacets,
         );
     }
 
@@ -164,6 +178,49 @@ class FacetsSearchService
     }
 
     /**
+     * Lit la distribution des facettes : les comptes par slug, et les slugs disponibles par taxonomie.
+     *
+     * Avec MeiliScout 2.0, chaque taxonomie a sa facette (`taxonomies.<taxonomie>.slug`).
+     * Avant, une seule facette `terms.slug` mêlait les taxonomies : on retrouve la
+     * taxonomie de chaque slug en base.
+     *
+     * @param  array<string, array<string, int>>  $distribution  facetDistribution de Meilisearch
+     * @param  array<string, string>  $attributes  Taxonomie => attribut de facette demandé
+     * @return array{0: array<string, int>, 1: array<string, string[]>}
+     */
+    private function readFacets(array $distribution, array $attributes): array
+    {
+        if ($attributes === []) {
+            return [[], []];
+        }
+
+        if (! MeiliScout::groupsTermsByTaxonomy()) {
+            $counts = $distribution['terms.slug'] ?? [];
+
+            return [$counts, $this->mapSlugsToTaxonomies(array_map('strval', array_keys($counts)))];
+        }
+
+        $counts    = [];
+        $available = [];
+
+        foreach ($attributes as $taxonomy => $attribute) {
+            $taxonomyCounts = $distribution[$attribute] ?? [];
+
+            if ($taxonomyCounts === []) {
+                continue;
+            }
+
+            $available[$taxonomy] = array_map('strval', array_keys($taxonomyCounts));
+
+            foreach ($taxonomyCounts as $slug => $count) {
+                $counts[$slug] = ($counts[$slug] ?? 0) + $count;
+            }
+        }
+
+        return [$counts, $available];
+    }
+
+    /**
      * Mappe des slugs de termes vers leurs taxonomies WordPress.
      * Utilisé pour construire la réponse availableFacets depuis facetDistribution.
      *
@@ -204,9 +261,8 @@ class FacetsSearchService
      */
     private function buildFilters(SearchConfigInterface $config, SearchRequest $request): array
     {
-        $postType = addslashes($config->getPostType());
         $filters = [
-            "post_type = \"{$postType}\"",
+            'post_type = ' . MeiliScout::quote($config->getPostType()),
             'post_status = "publish"',
         ];
 
@@ -216,15 +272,7 @@ class FacetsSearchService
                 continue;
             }
 
-            $taxonomy = addslashes($taxonomy);
-
-            if (is_array($slugs)) {
-                $slugList  = implode("', '", array_map('addslashes', $slugs));
-                $filters[] = "(terms.taxonomy = '{$taxonomy}' AND terms.slug IN ['{$slugList}'])";
-            } else {
-                $slug      = addslashes($slugs);
-                $filters[] = "(terms.taxonomy = '{$taxonomy}' AND terms.slug = '{$slug}')";
-            }
+            $filters[] = MeiliScout::taxonomyFilter((string) $taxonomy, array_map('strval', (array) $slugs));
         }
 
         // Filtres custom (meta, booléens, etc.)

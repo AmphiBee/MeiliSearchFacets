@@ -6,7 +6,9 @@ namespace AmphiBee\MeilisearchFacets\Console;
 
 use AmphiBee\MeilisearchFacets\Client\MeilisearchClient;
 use AmphiBee\MeilisearchFacets\Config\SearchConfigInterface;
+use AmphiBee\MeilisearchFacets\Support\MeiliScout;
 use Illuminate\Console\Command;
+use Pollora\MeiliScout\Indexables\PostIndexable;
 
 /**
  * Configure les settings Meilisearch d'un index pour un listing donné.
@@ -14,10 +16,15 @@ use Illuminate\Console\Command;
  * Usage :
  *   php artisan meilisearch-facets:configure "App\Search\ReferenceSearchConfig"
  *
- * Cette commande :
+ * Sans MeiliScout 2.0, cette commande :
  *   1. Récupère les attributs filtrables/triables déclarés dans la config
  *   2. Les fusionne avec les attributs existants de l'index (sans perte)
  *   3. Configure les ranking rules pour que le tri explicite ait la priorité
+ *
+ * Avec MeiliScout 2.0, elle ne modifie rien : MeiliScout paramètre son index à
+ * chaque indexation complète, sur un nouvel index, et ce qu'on y ajouterait à la
+ * main serait perdu (remplacer les attributs triables casserait aussi ses tris).
+ * Elle vérifie que les réglages de MeiliScout couvrent ceux du listing.
  */
 class ConfigureIndexCommand extends Command
 {
@@ -50,6 +57,11 @@ class ConfigureIndexCommand extends Command
         }
 
         $index = $config->getIndex();
+
+        if (MeiliScout::managesIndexes()) {
+            return $this->checkMeiliScoutSettings($config, $index);
+        }
+
         $this->info("Configuration de l'index : <comment>{$index}</comment>");
         $this->newLine();
 
@@ -67,6 +79,59 @@ class ConfigureIndexCommand extends Command
         $this->info('✓ Index configuré avec succès.');
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * Vérifie que les attributs du listing sont filtrables et triables dans les réglages de MeiliScout.
+     */
+    private function checkMeiliScoutSettings(SearchConfigInterface $config, string $index): int
+    {
+        $this->info("Index de MeiliScout : <comment>{$index}</comment>");
+        $this->line('MeiliScout paramètre cet index lui-même : rien n\'est modifié, les réglages sont vérifiés.');
+        $this->newLine();
+
+        $settings = (new PostIndexable())->getIndexSettings();
+        $missing  = [
+            'filtrables' => $this->uncovered($config->getFilterableAttributes(), $settings['filterableAttributes'] ?? []),
+            'triables'   => $this->uncovered($config->getSortableAttributes(), $settings['sortableAttributes'] ?? []),
+        ];
+
+        foreach ($missing as $kind => $attributes) {
+            foreach ($attributes as $attribute) {
+                $hint = str_starts_with($attribute, 'metas.')
+                    ? 'ajouter la clé « ' . substr($attribute, 6) . ' » dans MeiliScout › Contenus › Clés méta, puis lancer une indexation complète'
+                    : 'champ absent des réglages de MeiliScout';
+                $this->warn("Attribut non {$kind} : {$attribute} ({$hint})");
+            }
+        }
+
+        if ($missing['filtrables'] !== [] || $missing['triables'] !== []) {
+            return Command::FAILURE;
+        }
+
+        $this->info('✓ Les réglages de MeiliScout couvrent ce listing.');
+
+        return Command::SUCCESS;
+    }
+
+    /**
+     * Les attributs qu'aucun réglage ne couvre : un attribut réglé couvre aussi ses sous-champs (`taxonomies`).
+     *
+     * @param  string[]  $wanted
+     * @param  string[]  $configured
+     * @return string[]
+     */
+    private function uncovered(array $wanted, array $configured): array
+    {
+        return array_values(array_filter($wanted, static function (string $attribute) use ($configured): bool {
+            foreach ($configured as $setting) {
+                if ($attribute === $setting || str_starts_with($attribute, $setting . '.')) {
+                    return false;
+                }
+            }
+
+            return true;
+        }));
     }
 
     private function configureFilterableAttributes(SearchConfigInterface $config, string $index): void
