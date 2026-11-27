@@ -18,7 +18,13 @@ composer install
 # ServiceProvider manually in bootstrap/providers.php (see README.md for details)
 ```
 
-No test suite exists in this project.
+Tests live in `tests/` with their own `composer.json`: the root `vendor/` is committed and must not receive dev dependencies.
+
+```bash
+cd tests && composer install && vendor/bin/phpunit -c phpunit.xml
+```
+
+Artisan commands must not resolve `MeilisearchClient` in their constructor: artisan builds every command at boot (including `package:discover`, outside WordPress). Inject it in `handle()`.
 
 ## Architecture
 
