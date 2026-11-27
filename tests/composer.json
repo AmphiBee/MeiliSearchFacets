@@ -1,0 +1,16 @@
+{
+    "name": "amphibee/meilisearch-facets-tests",
+    "description": "Outillage de test, à part : le vendor/ de la racine est versionné et ne doit pas recevoir de dépendances.",
+    "license": "MIT",
+    "require": {
+        "php": "^8.4",
+        "orchestra/testbench": "^10.0",
+        "phpunit/phpunit": "^11.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "AmphiBee\\MeilisearchFacets\\": "../src/",
+            "AmphiBee\\MeilisearchFacets\\Tests\\": ""
+        }
+    }
+}

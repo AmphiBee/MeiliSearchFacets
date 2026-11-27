@@ -33,13 +33,17 @@ class ConfigureIndexCommand extends Command
 
     protected $description = 'Configure les attributs filtrables, triables et les ranking rules Meilisearch pour un listing';
 
-    public function __construct(private readonly MeilisearchClient $client)
-    {
-        parent::__construct();
-    }
+    private MeilisearchClient $client;
 
-    public function handle(): int
+    /**
+     * Le client est demandé ici et non au constructeur : artisan construit toutes les commandes
+     * à son démarrage, y compris pendant `package:discover`, hors WordPress, où lire les
+     * réglages de MeiliScout échoue (`get_option()` n'existe pas).
+     */
+    public function handle(MeilisearchClient $client): int
     {
+        $this->client = $client;
+
         $configClass = $this->argument('config');
 
         if (! class_exists($configClass)) {
